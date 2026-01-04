@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+import { useCallback, useEffect, useState } from 'react';
 
 export const dynamic = 'force-dynamic';
 
@@ -146,7 +146,7 @@ export default function EditHolding() {
 
         <div style={{ marginBottom: '1.5rem' }}>
           <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
-            Cost Basis (per share) *
+            Total Cost Basis *
           </label>
           <input
             type="number"

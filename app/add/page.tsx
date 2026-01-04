@@ -103,7 +103,7 @@ export default function AddHolding() {
 
         <div style={{ marginBottom: '1.5rem' }}>
           <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
-            Cost Basis (per share) *
+            Total Cost Basis *
           </label>
           <input
             type="number"
@@ -118,7 +118,7 @@ export default function AddHolding() {
               borderRadius: '6px',
               fontSize: '1rem',
             }}
-            placeholder="150.00"
+            placeholder="1500.00"
           />
         </div>
 

@@ -42,3 +42,4 @@ portfolio.db
 *.tsbuildinfo
 next-env.d.ts
 
+extension/sample.html

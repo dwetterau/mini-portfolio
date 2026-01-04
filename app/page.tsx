@@ -10,6 +10,7 @@ interface Holding {
   ticker: string;
   company_name: string;
   cost_basis: number;
+  cost_per_share: number;
   shares: number;
   current_price: number | null;
   current_value: number;
@@ -176,7 +177,7 @@ export default function Home() {
                     {holding.shares.toFixed(4)}
                   </td>
                   <td style={{ padding: '1rem', textAlign: 'right' }}>
-                    {formatCurrency(holding.cost_basis)}
+                    {formatCurrency(holding.cost_per_share)}
                   </td>
                   <td style={{ padding: '1rem', textAlign: 'right' }}>
                     {holding.current_price ? formatCurrency(holding.current_price) : 'N/A'}
