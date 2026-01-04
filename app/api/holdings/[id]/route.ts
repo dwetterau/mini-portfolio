@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getHoldingById, updateHolding, deleteHolding, calculateHoldingMetrics } from '@/lib/db';
+import { getHoldingById, updateHolding, deleteHolding, calculateHoldingMetrics, updateTargetAllocation } from '@/lib/db';
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -21,7 +21,7 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   try {
     const id = parseInt(params.id);
     const body = await request.json();
-    const { ticker, company_name, cost_basis, shares, current_price } = body;
+    const { ticker, company_name, cost_basis, shares, current_price, target_allocation } = body;
 
     if (!ticker || !company_name || cost_basis === undefined || shares === undefined) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -33,7 +33,8 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
       company_name,
       cost_basis,
       shares,
-      current_price || null
+      current_price || null,
+      target_allocation ?? null
     );
 
     if (!holding) {
@@ -45,6 +46,26 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   } catch (error) {
     console.error('Error updating holding:', error);
     return NextResponse.json({ error: 'Failed to update holding' }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const id = parseInt(params.id);
+    const body = await request.json();
+    const { target_allocation } = body;
+
+    const holding = updateTargetAllocation(id, target_allocation ?? null);
+
+    if (!holding) {
+      return NextResponse.json({ error: 'Holding not found' }, { status: 404 });
+    }
+
+    const holdingWithMetrics = calculateHoldingMetrics(holding);
+    return NextResponse.json(holdingWithMetrics);
+  } catch (error) {
+    console.error('Error updating target allocation:', error);
+    return NextResponse.json({ error: 'Failed to update target allocation' }, { status: 500 });
   }
 }
 

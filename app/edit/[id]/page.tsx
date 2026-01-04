@@ -12,6 +12,7 @@ interface Holding {
   cost_basis: number;
   shares: number;
   current_price: number | null;
+  target_allocation: number | null;
 }
 
 export default function EditHolding() {
@@ -24,6 +25,7 @@ export default function EditHolding() {
     cost_basis: '',
     shares: '',
     current_price: '',
+    target_allocation: '',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -39,6 +41,7 @@ export default function EditHolding() {
           cost_basis: holding.cost_basis.toString(),
           shares: holding.shares.toString(),
           current_price: holding.current_price?.toString() || '',
+          target_allocation: holding.target_allocation?.toString() || '',
         });
       } else {
         alert('Error loading holding');
@@ -73,6 +76,7 @@ export default function EditHolding() {
           cost_basis: parseFloat(formData.cost_basis),
           shares: parseFloat(formData.shares),
           current_price: formData.current_price ? parseFloat(formData.current_price) : null,
+          target_allocation: formData.target_allocation ? parseFloat(formData.target_allocation) : null,
         }),
       });
 
@@ -202,6 +206,31 @@ export default function EditHolding() {
             }}
             placeholder="175.00 (optional)"
           />
+        </div>
+
+        <div style={{ marginBottom: '1.5rem' }}>
+          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
+            Target Allocation (%)
+          </label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            max="100"
+            value={formData.target_allocation}
+            onChange={(e) => setFormData({ ...formData, target_allocation: e.target.value })}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '6px',
+              fontSize: '1rem',
+            }}
+            placeholder="10.0 (optional)"
+          />
+          <p style={{ marginTop: '0.375rem', fontSize: '0.875rem', color: '#6b7280' }}>
+            Your desired percentage of this holding in your portfolio
+          </p>
         </div>
 
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>

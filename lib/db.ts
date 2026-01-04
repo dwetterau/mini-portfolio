@@ -14,10 +14,18 @@ export function initDatabase() {
       cost_basis REAL NOT NULL,
       shares REAL NOT NULL,
       current_price REAL,
+      target_allocation REAL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Add target_allocation column if it doesn't exist (migration for existing DBs)
+  try {
+    db.exec(`ALTER TABLE holdings ADD COLUMN target_allocation REAL`);
+  } catch {
+    // Column already exists, ignore error
+  }
 }
 
 // Initialize on import
@@ -30,6 +38,7 @@ export interface Holding {
   cost_basis: number;
   shares: number;
   current_price: number | null;
+  target_allocation: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +49,7 @@ export interface HoldingWithCalculations extends Holding {
   total_cost: number;
   gain_loss: number;
   gain_loss_percent: number;
+  portfolio_percent?: number;
 }
 
 export function getAllHoldings(): Holding[] {
@@ -64,13 +74,14 @@ export function createHolding(
   company_name: string,
   cost_basis: number,
   shares: number,
-  current_price: number | null = null
+  current_price: number | null = null,
+  target_allocation: number | null = null
 ): Holding {
   const stmt = db.prepare(`
-    INSERT INTO holdings (ticker, company_name, cost_basis, shares, current_price)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO holdings (ticker, company_name, cost_basis, shares, current_price, target_allocation)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
-  const result = stmt.run(ticker, company_name, cost_basis, shares, current_price);
+  const result = stmt.run(ticker, company_name, cost_basis, shares, current_price, target_allocation);
   return getHoldingById(result.lastInsertRowid as number)!;
 }
 
@@ -80,14 +91,25 @@ export function updateHolding(
   company_name: string,
   cost_basis: number,
   shares: number,
-  current_price: number | null = null
+  current_price: number | null = null,
+  target_allocation: number | null = null
 ): Holding | null {
   const stmt = db.prepare(`
     UPDATE holdings
-    SET ticker = ?, company_name = ?, cost_basis = ?, shares = ?, current_price = ?, updated_at = CURRENT_TIMESTAMP
+    SET ticker = ?, company_name = ?, cost_basis = ?, shares = ?, current_price = ?, target_allocation = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
-  stmt.run(ticker, company_name, cost_basis, shares, current_price, id);
+  stmt.run(ticker, company_name, cost_basis, shares, current_price, target_allocation, id);
+  return getHoldingById(id);
+}
+
+export function updateTargetAllocation(id: number, target_allocation: number | null): Holding | null {
+  const stmt = db.prepare(`
+    UPDATE holdings
+    SET target_allocation = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  stmt.run(target_allocation, id);
   return getHoldingById(id);
 }
 
@@ -96,13 +118,16 @@ export function upsertHoldingByTicker(
   company_name: string,
   cost_basis: number,
   shares: number,
-  current_price: number | null = null
+  current_price: number | null = null,
+  target_allocation: number | null = null
 ): Holding {
   const existing = getHoldingByTicker(ticker);
   if (existing) {
-    return updateHolding(existing.id, ticker, company_name, cost_basis, shares, current_price)!;
+    // Preserve existing target_allocation if not provided
+    const newTargetAllocation = target_allocation ?? existing.target_allocation;
+    return updateHolding(existing.id, ticker, company_name, cost_basis, shares, current_price, newTargetAllocation)!;
   } else {
-    return createHolding(ticker, company_name, cost_basis, shares, current_price);
+    return createHolding(ticker, company_name, cost_basis, shares, current_price, target_allocation);
   }
 }
 
