@@ -14,10 +14,18 @@ export function initDatabase() {
       cost_basis REAL NOT NULL,
       shares REAL NOT NULL,
       current_price REAL,
+      desired_percent REAL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Lightweight migrations for existing DBs
+  const columns = db.prepare(`PRAGMA table_info('holdings')`).all() as Array<{ name: string }>;
+  const hasDesiredPercent = columns.some((c) => c.name === 'desired_percent');
+  if (!hasDesiredPercent) {
+    db.exec(`ALTER TABLE holdings ADD COLUMN desired_percent REAL`);
+  }
 }
 
 // Initialize on import
@@ -30,6 +38,7 @@ export interface Holding {
   cost_basis: number;
   shares: number;
   current_price: number | null;
+  desired_percent: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -64,13 +73,14 @@ export function createHolding(
   company_name: string,
   cost_basis: number,
   shares: number,
-  current_price: number | null = null
+  current_price: number | null = null,
+  desired_percent: number | null = null
 ): Holding {
   const stmt = db.prepare(`
-    INSERT INTO holdings (ticker, company_name, cost_basis, shares, current_price)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO holdings (ticker, company_name, cost_basis, shares, current_price, desired_percent)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
-  const result = stmt.run(ticker, company_name, cost_basis, shares, current_price);
+  const result = stmt.run(ticker, company_name, cost_basis, shares, current_price, desired_percent);
   return getHoldingById(result.lastInsertRowid as number)!;
 }
 
@@ -80,14 +90,15 @@ export function updateHolding(
   company_name: string,
   cost_basis: number,
   shares: number,
-  current_price: number | null = null
+  current_price: number | null = null,
+  desired_percent: number | null = null
 ): Holding | null {
   const stmt = db.prepare(`
     UPDATE holdings
-    SET ticker = ?, company_name = ?, cost_basis = ?, shares = ?, current_price = ?, updated_at = CURRENT_TIMESTAMP
+    SET ticker = ?, company_name = ?, cost_basis = ?, shares = ?, current_price = ?, desired_percent = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
-  stmt.run(ticker, company_name, cost_basis, shares, current_price, id);
+  stmt.run(ticker, company_name, cost_basis, shares, current_price, desired_percent, id);
   return getHoldingById(id);
 }
 
@@ -96,14 +107,25 @@ export function upsertHoldingByTicker(
   company_name: string,
   cost_basis: number,
   shares: number,
-  current_price: number | null = null
+  current_price: number | null = null,
+  desired_percent: number | null = null
 ): Holding {
   const existing = getHoldingByTicker(ticker);
   if (existing) {
-    return updateHolding(existing.id, ticker, company_name, cost_basis, shares, current_price)!;
+    return updateHolding(existing.id, ticker, company_name, cost_basis, shares, current_price, desired_percent)!;
   } else {
-    return createHolding(ticker, company_name, cost_basis, shares, current_price);
+    return createHolding(ticker, company_name, cost_basis, shares, current_price, desired_percent);
   }
+}
+
+export function updateHoldingDesiredPercent(id: number, desired_percent: number | null): Holding | null {
+  const stmt = db.prepare(`
+    UPDATE holdings
+    SET desired_percent = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  stmt.run(desired_percent, id);
+  return getHoldingById(id);
 }
 
 export function deleteHolding(id: number): boolean {

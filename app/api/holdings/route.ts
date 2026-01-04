@@ -26,13 +26,20 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { ticker, company_name, cost_basis, shares, current_price } = body;
+    const { ticker, company_name, cost_basis, shares, current_price, desired_percent } = body;
 
     if (!ticker || !company_name || cost_basis === undefined || shares === undefined) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400, headers: corsHeaders });
     }
 
-    const holding = createHolding(ticker, company_name, cost_basis, shares, current_price || null);
+    const holding = createHolding(
+      ticker,
+      company_name,
+      cost_basis,
+      shares,
+      current_price || null,
+      desired_percent ?? null
+    );
     const holdingWithMetrics = calculateHoldingMetrics(holding);
 
     return NextResponse.json(holdingWithMetrics, { status: 201, headers: corsHeaders });

@@ -13,6 +13,7 @@ export default function AddHolding() {
     cost_basis: '',
     shares: '',
     current_price: '',
+    desired_percent: '',
   });
   const [loading, setLoading] = useState(false);
 
@@ -32,6 +33,7 @@ export default function AddHolding() {
           cost_basis: parseFloat(formData.cost_basis),
           shares: parseFloat(formData.shares),
           current_price: formData.current_price ? parseFloat(formData.current_price) : null,
+          desired_percent: formData.desired_percent ? parseFloat(formData.desired_percent) : null,
         }),
       });
 
@@ -160,6 +162,26 @@ export default function AddHolding() {
               fontSize: '1rem',
             }}
             placeholder="175.00 (optional)"
+          />
+        </div>
+
+        <div style={{ marginBottom: '1.5rem' }}>
+          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
+            Desired % (optional)
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            value={formData.desired_percent}
+            onChange={(e) => setFormData({ ...formData, desired_percent: e.target.value })}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '6px',
+              fontSize: '1rem',
+            }}
+            placeholder="10.00 (optional)"
           />
         </div>
 

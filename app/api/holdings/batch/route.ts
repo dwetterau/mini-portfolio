@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     const errors = [];
 
     for (const holding of holdings) {
-      const { ticker, company_name, cost_basis, shares, current_price } = holding;
+      const { ticker, company_name, cost_basis, shares, current_price, desired_percent } = holding;
 
       if (!ticker || !company_name || cost_basis === undefined || shares === undefined) {
         errors.push({
@@ -36,7 +36,14 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const created = upsertHoldingByTicker(ticker, company_name, cost_basis, shares, current_price || null);
+        const created = upsertHoldingByTicker(
+          ticker,
+          company_name,
+          cost_basis,
+          shares,
+          current_price || null,
+          desired_percent ?? null
+        );
         const holdingWithMetrics = calculateHoldingMetrics(created);
         results.push(holdingWithMetrics);
       } catch (error) {
