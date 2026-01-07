@@ -137,6 +137,12 @@ export function deleteHolding(id: number): boolean {
   return result.changes > 0;
 }
 
+export function deleteHoldingsWithoutTarget(): number {
+  const stmt = db.prepare('DELETE FROM holdings WHERE target_allocation IS NULL OR target_allocation = 0');
+  const result = stmt.run();
+  return result.changes;
+}
+
 export function calculateHoldingMetrics(holding: Holding): HoldingWithCalculations {
   // cost_basis in the DB is the TOTAL cost basis (not per-share)
   const totalCost = holding.cost_basis;

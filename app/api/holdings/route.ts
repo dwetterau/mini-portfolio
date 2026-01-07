@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllHoldings, createHolding, calculateHoldingMetrics } from '@/lib/db';
+import { getAllHoldings, createHolding, calculateHoldingMetrics, deleteHoldingsWithoutTarget } from '@/lib/db';
 
 // CORS headers for Chrome extension
 const corsHeaders = {
@@ -39,5 +39,15 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error creating holding:', error);
     return NextResponse.json({ error: 'Failed to create holding' }, { status: 500, headers: corsHeaders });
+  }
+}
+
+export async function DELETE() {
+  try {
+    const deletedCount = deleteHoldingsWithoutTarget();
+    return NextResponse.json({ deleted: deletedCount }, { headers: corsHeaders });
+  } catch (error) {
+    console.error('Error deleting holdings:', error);
+    return NextResponse.json({ error: 'Failed to delete holdings' }, { status: 500, headers: corsHeaders });
   }
 }

@@ -270,6 +270,18 @@ export default function Home() {
     }
   };
 
+  const handleDeleteUntargeted = async () => {
+    const count = holdings.filter(h => h.target_allocation === null || h.target_allocation === 0).length;
+    if (count === 0) {
+      alert('No holdings without target allocation to delete.');
+      return;
+    }
+    if (confirm(`Delete ${count} holding${count !== 1 ? 's' : ''} without target allocation? Holdings with a target % set will be kept.`)) {
+      await fetch('/api/holdings', { method: 'DELETE' });
+      fetchHoldings();
+    }
+  };
+
   if (loading) {
     return (
       <main style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem' }}>
@@ -324,21 +336,42 @@ export default function Home() {
         }}
       >
         <h1 style={{ fontSize: '2rem', fontWeight: 'bold', color: '#111827' }}>Portfolio</h1>
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          style={{
-            padding: '0.75rem 1.5rem',
-            backgroundColor: showAddForm ? '#374151' : '#059669',
-            color: 'white',
-            borderRadius: '8px',
-            fontWeight: '500',
-            border: 'none',
-            cursor: 'pointer',
-            transition: 'background-color 0.15s',
-          }}
-        >
-          {showAddForm ? 'Cancel' : '+ Quick Add'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          {holdings.some(h => h.target_allocation === null || h.target_allocation === 0) && (
+            <button
+              onClick={handleDeleteUntargeted}
+              style={{
+                padding: '0.75rem 1.5rem',
+                backgroundColor: '#dc2626',
+                color: 'white',
+                borderRadius: '8px',
+                fontWeight: '500',
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'background-color 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#b91c1c')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#dc2626')}
+            >
+              🗑️ Delete Untargeted
+            </button>
+          )}
+          <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            style={{
+              padding: '0.75rem 1.5rem',
+              backgroundColor: showAddForm ? '#374151' : '#059669',
+              color: 'white',
+              borderRadius: '8px',
+              fontWeight: '500',
+              border: 'none',
+              cursor: 'pointer',
+              transition: 'background-color 0.15s',
+            }}
+          >
+            {showAddForm ? 'Cancel' : '+ Quick Add'}
+          </button>
+        </div>
       </div>
 
       {/* Quick Add Form */}
