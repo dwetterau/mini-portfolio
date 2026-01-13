@@ -20,6 +20,25 @@ interface AlpacaBarsResponse {
   next_page_token?: string;
 }
 
+interface YahooChartResponse {
+  chart: {
+    result: Array<{
+      meta: { symbol: string };
+      timestamp: number[];
+      indicators: {
+        quote: Array<{
+          open: (number | null)[];
+          high: (number | null)[];
+          low: (number | null)[];
+          close: (number | null)[];
+          volume: (number | null)[];
+        }>;
+      };
+    }> | null;
+    error: { code: string; description: string } | null;
+  };
+}
+
 function getApiCredentials(): { apiKey: string; secretKey: string } {
   const apiKey = process.env.ALPACA_API_KEY;
   const secretKey = process.env.ALPACA_SECRET_KEY;
@@ -64,8 +83,7 @@ async function fetchBarsFromAlpaca(
   tickers: string[],
   startDate: string,
   endDate: string,
-  credentials: { apiKey: string; secretKey: string },
-  feed: 'iex' | 'otc' = 'iex'
+  credentials: { apiKey: string; secretKey: string }
 ): Promise<Record<string, AlpacaBar[]>> {
   const allBars: Record<string, AlpacaBar[]> = {};
 
@@ -84,7 +102,7 @@ async function fetchBarsFromAlpaca(
       timeframe: '1Day',
       limit: '10000',
       adjustment: 'split', // Adjust for stock splits
-      feed,
+      feed: 'iex', // Use IEX feed (free tier)
     });
 
     if (nextPageToken) {
@@ -103,11 +121,6 @@ async function fetchBarsFromAlpaca(
 
     if (!response.ok) {
       const errorText = await response.text();
-      // For OTC feed, don't throw on errors - just return empty (some tickers may not be available)
-      if (feed === 'otc') {
-        console.warn(`OTC feed warning for ${tickers.join(',')}: ${errorText}`);
-        return allBars;
-      }
       throw new Error(`Alpaca API error (${response.status}): ${errorText}`);
     }
 
@@ -128,6 +141,78 @@ async function fetchBarsFromAlpaca(
   } while (nextPageToken);
 
   return allBars;
+}
+
+async function fetchBarsFromYahoo(
+  ticker: string,
+  startDate: string,
+  endDate: string
+): Promise<AlpacaBar[]> {
+  // Convert dates to Unix timestamps
+  const start = Math.floor(new Date(startDate).getTime() / 1000);
+  const end = Math.floor(new Date(endDate + 'T23:59:59').getTime() / 1000);
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&period1=${start}&period2=${end}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.warn(`Yahoo Finance error for ${ticker}: ${response.status}`);
+      return [];
+    }
+
+    const data: YahooChartResponse = await response.json();
+
+    if (data.chart.error || !data.chart.result || data.chart.result.length === 0) {
+      console.warn(`Yahoo Finance: No data for ${ticker}`);
+      return [];
+    }
+
+    const result = data.chart.result[0];
+    const timestamps = result.timestamp || [];
+    const quote = result.indicators.quote[0];
+
+    const bars: AlpacaBar[] = [];
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const open = quote.open[i];
+      const high = quote.high[i];
+      const low = quote.low[i];
+      const close = quote.close[i];
+      const volume = quote.volume[i];
+
+      // Skip if any essential data is missing
+      if (open == null || high == null || low == null || close == null) {
+        continue;
+      }
+
+      // Convert Unix timestamp to ISO date string
+      const date = new Date(timestamps[i] * 1000);
+      const isoDate = date.toISOString();
+
+      bars.push({
+        t: isoDate,
+        o: open,
+        h: high,
+        l: low,
+        c: close,
+        v: volume ?? 0,
+        n: 0, // Yahoo doesn't provide trade count
+        vw: 0, // Yahoo doesn't provide VWAP
+      });
+    }
+
+    return bars;
+  } catch (error) {
+    console.error(`Yahoo Finance fetch error for ${ticker}:`, error);
+    return [];
+  }
 }
 
 export async function POST() {
@@ -173,40 +258,31 @@ export async function POST() {
     const allMissingDates = tickersToSync.flatMap((t) => t.missingDates);
     const earliestMissing = allMissingDates.sort()[0];
 
-    // First, try fetching with the IEX feed (covers most US stocks)
+    // Fetch from Alpaca IEX feed (covers most US exchange-traded stocks)
     const bars = await fetchBarsFromAlpaca(
       tickersNeedingData,
       earliestMissing,
       endDate,
-      credentials,
-      'iex'
+      credentials
     );
 
-    // Find tickers that returned no data from IEX (likely OTC stocks)
+    // Find tickers that returned no data from Alpaca (likely OTC stocks)
     const tickersWithNoData = tickersNeedingData.filter(
       (ticker) => !bars[ticker] || bars[ticker].length === 0
     );
 
-    // Retry OTC tickers with the OTC feed
-    const otcTickersFetched: string[] = [];
+    // Fallback to Yahoo Finance for tickers with no Alpaca data
+    const yahooTickersFetched: string[] = [];
     if (tickersWithNoData.length > 0) {
       console.log(
-        `Retrying ${tickersWithNoData.length} tickers with OTC feed: ${tickersWithNoData.join(', ')}`
+        `Fetching ${tickersWithNoData.length} tickers from Yahoo Finance: ${tickersWithNoData.join(', ')}`
       );
 
-      const otcBars = await fetchBarsFromAlpaca(
-        tickersWithNoData,
-        earliestMissing,
-        endDate,
-        credentials,
-        'otc'
-      );
-
-      // Merge OTC bars into the main bars object
-      for (const [ticker, tickerBars] of Object.entries(otcBars)) {
-        if (tickerBars.length > 0) {
-          bars[ticker] = tickerBars;
-          otcTickersFetched.push(ticker);
+      for (const ticker of tickersWithNoData) {
+        const yahooBars = await fetchBarsFromYahoo(ticker, earliestMissing, endDate);
+        if (yahooBars.length > 0) {
+          bars[ticker] = yahooBars;
+          yahooTickersFetched.push(ticker);
         }
       }
     }
@@ -260,7 +336,7 @@ export async function POST() {
         tickersProcessed: tickersNeedingData.length,
         recordsFound: records.length,
         recordsInserted: insertedCount,
-        otcTickers: otcTickersFetched,
+        yahooTickers: yahooTickersFetched,
       },
     });
   } catch (error) {

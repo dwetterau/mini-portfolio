@@ -60,7 +60,7 @@ export default function Home() {
   const [editingTargetId, setEditingTargetId] = useState<number | null>(null);
   const [editingTargetValue, setEditingTargetValue] = useState<string>('');
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<TabView>('holdings');
+  const [activeTab, setActiveTab] = useState<TabView>('history');
   const menuRef = useRef<HTMLDivElement>(null);
   const headerMenuRef = useRef<HTMLDivElement>(null);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
@@ -275,16 +275,23 @@ export default function Home() {
       return [];
     }
 
+    // Only show data from January 8th onwards
+    const START_DISPLAY_DATE = '2026-01-08';
+
     // Create a map of ticker -> shares for quick lookup
     const sharesMap = new Map<string, number>();
     holdings.forEach((h) => {
       sharesMap.set(h.ticker, h.shares);
     });
 
-    // Get all unique dates across all tickers
+    // Get all unique dates across all tickers (filtered to start date)
     const allDates = new Set<string>();
     Object.values(priceHistory).forEach((records) => {
-      records.forEach((r) => allDates.add(r.date));
+      records.forEach((r) => {
+        if (r.date >= START_DISPLAY_DATE) {
+          allDates.add(r.date);
+        }
+      });
     });
 
     // Convert price history to a map of date -> ticker -> price
@@ -302,10 +309,13 @@ export default function Home() {
     const sortedDates = Array.from(allDates).sort();
 
     // Calculate portfolio value for each date
-    const data = sortedDates.map((date) => {
+    let previousTotal = 0;
+    let previousTickerValues: Record<string, number> = {};
+    const data = sortedDates.map((date, index) => {
       const prices = priceMap.get(date) || new Map();
       let totalValue = 0;
       const tickerValues: Record<string, number> = {};
+      const tickerChanges: Record<string, number> = {};
 
       // Calculate value for each selected ticker
       selectedTickers.forEach((ticker) => {
@@ -315,18 +325,37 @@ export default function Home() {
           const value = price * shares;
           tickerValues[ticker] = value;
           totalValue += value;
+
+          // Calculate per-ticker daily change
+          const prevValue = previousTickerValues[ticker];
+          if (index > 0 && prevValue && prevValue > 0) {
+            tickerChanges[`${ticker}_change`] = ((value - prevValue) / prevValue) * 100;
+          } else {
+            tickerChanges[`${ticker}_change`] = 0;
+          }
         }
       });
 
-      return {
+      // Calculate daily percent change
+      const dailyChange = index > 0 && previousTotal > 0
+        ? ((totalValue - previousTotal) / previousTotal) * 100
+        : 0;
+
+      const result = {
         date,
         displayDate: new Date(date).toLocaleDateString('en-US', {
           month: 'short',
           day: 'numeric',
         }),
         total: totalValue,
+        dailyChange,
         ...tickerValues,
+        ...tickerChanges,
       };
+
+      previousTotal = totalValue;
+      previousTickerValues = { ...tickerValues };
+      return result;
     });
 
     return data;
@@ -373,6 +402,16 @@ export default function Home() {
 
   const toggleTicker = (ticker: string) => {
     setSelectedTickers((prev) => {
+      const allTickers = new Set(holdings.map((h) => h.ticker));
+      const allSelected = prev.size === allTickers.size &&
+        Array.from(allTickers).every((t) => prev.has(t));
+
+      // If all are selected and we click one, select only that one
+      if (allSelected) {
+        return new Set([ticker]);
+      }
+
+      // Otherwise toggle the ticker
       const newSet = new Set(prev);
       if (newSet.has(ticker)) {
         newSet.delete(ticker);
@@ -927,6 +966,23 @@ export default function Home() {
         }}
       >
         <button
+          onClick={() => setActiveTab('history')}
+          style={{
+            flex: 1,
+            padding: '0.75rem 1.5rem',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: '600',
+            fontSize: '0.9375rem',
+            transition: 'all 0.15s',
+            backgroundColor: activeTab === 'history' ? '#059669' : 'transparent',
+            color: activeTab === 'history' ? 'white' : '#6b7280',
+          }}
+        >
+          📊 Historical
+        </button>
+        <button
           onClick={() => setActiveTab('holdings')}
           style={{
             flex: 1,
@@ -959,23 +1015,6 @@ export default function Home() {
           }}
         >
           📈 Performance
-        </button>
-        <button
-          onClick={() => setActiveTab('history')}
-          style={{
-            flex: 1,
-            padding: '0.75rem 1.5rem',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: '600',
-            fontSize: '0.9375rem',
-            transition: 'all 0.15s',
-            backgroundColor: activeTab === 'history' ? '#059669' : 'transparent',
-            color: activeTab === 'history' ? 'white' : '#6b7280',
-          }}
-        >
-          📊 Historical
         </button>
       </div>
 
@@ -1343,13 +1382,47 @@ export default function Home() {
                     width={60}
                   />
                   <Tooltip
-                    formatter={(value, name) => [formatCurrency(value as number), name]}
+                    formatter={(value, name, props) => {
+                      const dataPoint = props.payload as Record<string, number>;
+                      const tickerChange = dataPoint[`${name}_change`] || 0;
+                      const changeColor = tickerChange >= 0 ? '#059669' : '#dc2626';
+                      const changeText = tickerChange !== 0
+                        ? ` (${tickerChange >= 0 ? '+' : ''}${tickerChange.toFixed(2)}%)`
+                        : '';
+                      return [
+                        <span key={name as string}>
+                          {formatCurrency(value as number)}
+                          {changeText && (
+                            <span style={{ color: changeColor, fontWeight: 600, marginLeft: '4px' }}>
+                              {changeText}
+                            </span>
+                          )}
+                        </span>,
+                        name
+                      ];
+                    }}
                     labelFormatter={(label, payload) => {
                       const total = payload?.reduce(
                         (sum, item) => sum + ((item.value as number) || 0),
                         0
                       );
-                      return `${label} — Total: ${formatCurrency(total || 0)}`;
+                      // Get daily change from the payload's first item
+                      const dataPoint = payload?.[0]?.payload as { dailyChange?: number } | undefined;
+                      const dailyChange = dataPoint?.dailyChange || 0;
+                      const changeColor = dailyChange >= 0 ? '#059669' : '#dc2626';
+                      const changeText = dailyChange !== 0
+                        ? ` (${dailyChange >= 0 ? '+' : ''}${dailyChange.toFixed(2)}%)`
+                        : '';
+                      return (
+                        <span>
+                          {label} — Total: {formatCurrency(total || 0)}
+                          {changeText && (
+                            <span style={{ color: changeColor, fontWeight: 600 }}>
+                              {changeText}
+                            </span>
+                          )}
+                        </span>
+                      );
                     }}
                     contentStyle={{
                       backgroundColor: 'white',
@@ -1394,7 +1467,7 @@ export default function Home() {
             >
               <div>
                 <div style={{ color: '#6b7280', fontSize: '0.75rem', marginBottom: '0.25rem' }}>
-                  Start Value (Jan 1)
+                  Start Value (Jan 8)
                 </div>
                 <div style={{ fontWeight: '600', fontSize: '1.125rem', fontFamily: 'monospace' }}>
                   {formatCurrency(historicalChartData[0]?.total || 0)}
