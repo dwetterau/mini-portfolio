@@ -18,6 +18,34 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+// Custom hook for persisted state in localStorage
+function usePersistedState<T>(key: string, defaultValue: T): [T, (value: T) => void] {
+  const [value, setValue] = useState<T>(defaultValue);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(key);
+    if (saved !== null) {
+      try {
+        setValue(JSON.parse(saved) as T);
+      } catch {
+        setValue(saved as T);
+      }
+    }
+    setIsInitialized(true);
+  }, [key]);
+
+  // Save to localStorage when value changes (after initialization)
+  useEffect(() => {
+    if (isInitialized) {
+      localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+    }
+  }, [key, value, isInitialized]);
+
+  return [value, setValue];
+}
+
 interface Holding {
   id: number;
   ticker: string;
@@ -55,12 +83,12 @@ interface PriceHistoryData {
 export default function Home() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortKey, setSortKey] = useState<SortKey>('ticker');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [sortKey, setSortKey] = usePersistedState<SortKey>('portfolio-sort-key', 'ticker');
+  const [sortDirection, setSortDirection] = usePersistedState<SortDirection>('portfolio-sort-direction', 'asc');
   const [editingTargetId, setEditingTargetId] = useState<number | null>(null);
   const [editingTargetValue, setEditingTargetValue] = useState<string>('');
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<TabView>('history');
+  const [activeTab, setActiveTab] = usePersistedState<TabView>('portfolio-active-tab', 'history');
   const menuRef = useRef<HTMLDivElement>(null);
   const headerMenuRef = useRef<HTMLDivElement>(null);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
@@ -81,6 +109,9 @@ export default function Home() {
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
   const [syncingPrices, setSyncingPrices] = useState(false);
 
+  // Performance chart comparison mode
+  const [performanceCompareMode, setPerformanceCompareMode] = usePersistedState<'costBasis' | 'jan8'>('portfolio-performance-compare-mode', 'costBasis');
+
   // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -94,33 +125,6 @@ export default function Home() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  // Load sort preferences and tab from localStorage on mount
-  useEffect(() => {
-    const savedSortKey = localStorage.getItem('portfolio-sort-key');
-    const savedSortDirection = localStorage.getItem('portfolio-sort-direction');
-    const savedTab = localStorage.getItem('portfolio-active-tab');
-    if (savedSortKey) {
-      setSortKey(savedSortKey as SortKey);
-    }
-    if (savedSortDirection) {
-      setSortDirection(savedSortDirection as SortDirection);
-    }
-    if (savedTab) {
-      setActiveTab(savedTab as TabView);
-    }
-  }, []);
-
-  // Save sort preferences to localStorage when they change
-  useEffect(() => {
-    localStorage.setItem('portfolio-sort-key', sortKey);
-    localStorage.setItem('portfolio-sort-direction', sortDirection);
-  }, [sortKey, sortDirection]);
-
-  // Save tab preference to localStorage when it changes
-  useEffect(() => {
-    localStorage.setItem('portfolio-active-tab', activeTab);
-  }, [activeTab]);
 
   useEffect(() => {
     fetchHoldings();
@@ -258,16 +262,35 @@ export default function Home() {
 
   // Chart data for cost basis vs current value
   const performanceChartData = useMemo(() => {
+    const JAN_8_DATE = '2026-01-08';
+
     return sortedHoldings
       .filter((h) => h.total_cost > 0 || h.current_value > 0)
-      .map((h) => ({
-        ticker: h.ticker,
-        costBasis: h.total_cost,
-        currentValue: h.current_value,
-        isGain: h.current_value >= h.total_cost,
-      }))
+      .map((h) => {
+        // Get January 8th closing price for this ticker
+        const tickerHistory = priceHistory[h.ticker] || [];
+        const jan8Record = tickerHistory.find((r) => r.date === JAN_8_DATE);
+        const jan8Value = jan8Record ? jan8Record.close_price * h.shares : null;
+
+        // Use the selected comparison mode
+        const compareValue = performanceCompareMode === 'jan8' && jan8Value !== null
+          ? jan8Value
+          : h.total_cost;
+
+        const changePercent = compareValue > 0
+          ? ((h.current_value - compareValue) / compareValue) * 100
+          : 0;
+
+        return {
+          ticker: h.ticker,
+          costBasis: compareValue,
+          currentValue: h.current_value,
+          isGain: h.current_value >= compareValue,
+          changePercent,
+        };
+      })
       .sort((a, b) => b.currentValue - a.currentValue);
-  }, [sortedHoldings]);
+  }, [sortedHoldings, priceHistory, performanceCompareMode]);
 
   // Historical chart data - calculate portfolio value over time using current shares
   const historicalChartData = useMemo(() => {
@@ -1096,7 +1119,7 @@ export default function Home() {
                     {chartData.map((entry, index) => (
                       <Cell
                         key={`cell-${index}`}
-                        fill={entry.current > entry.target ? '#dc2626' : '#059669'}
+                        fill={Math.abs(entry.current - entry.target) > 1 ? '#dc2626' : '#059669'}
                       />
                     ))}
                   </Bar>
@@ -1119,16 +1142,59 @@ export default function Home() {
             border: '1px solid #e5e7eb',
           }}
         >
-          <h3
-            style={{
-              marginBottom: '1.5rem',
-              fontWeight: '600',
-              color: '#374151',
-              fontSize: '1.125rem',
-            }}
-          >
-            Cost Basis vs. Current Value
-          </h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <h3
+              style={{
+                fontWeight: '600',
+                color: '#374151',
+                fontSize: '1.125rem',
+                margin: 0,
+              }}
+            >
+              {performanceCompareMode === 'costBasis' ? 'Cost Basis' : 'Jan 8th Value'} vs. Current Value
+            </h3>
+            <div
+              style={{
+                display: 'flex',
+                backgroundColor: '#f3f4f6',
+                borderRadius: '8px',
+                padding: '4px',
+              }}
+            >
+              <button
+                onClick={() => setPerformanceCompareMode('costBasis')}
+                style={{
+                  padding: '0.5rem 1rem',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  fontSize: '0.875rem',
+                  transition: 'all 0.15s',
+                  backgroundColor: performanceCompareMode === 'costBasis' ? '#059669' : 'transparent',
+                  color: performanceCompareMode === 'costBasis' ? 'white' : '#6b7280',
+                }}
+              >
+                Cost Basis
+              </button>
+              <button
+                onClick={() => setPerformanceCompareMode('jan8')}
+                style={{
+                  padding: '0.5rem 1rem',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  fontSize: '0.875rem',
+                  transition: 'all 0.15s',
+                  backgroundColor: performanceCompareMode === 'jan8' ? '#059669' : 'transparent',
+                  color: performanceCompareMode === 'jan8' ? 'white' : '#6b7280',
+                }}
+              >
+                Jan 8th Value
+              </button>
+            </div>
+          </div>
           {performanceChartData.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#6b7280' }}>
               No holdings with cost data to display.
@@ -1160,10 +1226,29 @@ export default function Home() {
                     fontWeight={600}
                   />
                   <Tooltip
-                    formatter={(value, name) => [
-                      formatCurrency(value as number),
-                      name === 'costBasis' ? 'Cost Basis' : 'Current Value',
-                    ]}
+                    formatter={(value, name, props) => {
+                      const dataPoint = props.payload as { changePercent: number; isGain: boolean };
+                      const label = name === 'costBasis'
+                        ? (performanceCompareMode === 'jan8' ? 'Jan 8th Value' : 'Cost Basis')
+                        : 'Current Value';
+
+                      // Only show percentage on the Current Value line
+                      if (name === 'currentValue') {
+                        const changePercent = dataPoint.changePercent;
+                        const changeColor = changePercent >= 0 ? '#059669' : '#dc2626';
+                        return [
+                          <span key="current">
+                            {formatCurrency(value as number)}
+                            <span style={{ color: changeColor, fontWeight: 600, marginLeft: '6px' }}>
+                              ({changePercent >= 0 ? '+' : ''}{changePercent.toFixed(2)}%)
+                            </span>
+                          </span>,
+                          label,
+                        ];
+                      }
+
+                      return [formatCurrency(value as number), label];
+                    }}
                     contentStyle={{
                       backgroundColor: 'white',
                       border: '1px solid #e5e7eb',
@@ -1177,7 +1262,9 @@ export default function Home() {
                     wrapperStyle={{ paddingTop: '1rem' }}
                     formatter={(value) => (
                       <span style={{ color: '#374151', fontWeight: 500 }}>
-                        {value === 'costBasis' ? 'Cost Basis' : 'Current Value'}
+                        {value === 'costBasis'
+                          ? (performanceCompareMode === 'jan8' ? 'Jan 8th Value' : 'Cost Basis')
+                          : 'Current Value'}
                       </span>
                     )}
                   />
@@ -1446,6 +1533,7 @@ export default function Home() {
                       stroke={tickerColors.get(ticker)}
                       strokeWidth={1}
                       fill={`url(#gradient-${ticker})`}
+                      isAnimationActive={false}
                     />
                   ))}
                 </AreaChart>
