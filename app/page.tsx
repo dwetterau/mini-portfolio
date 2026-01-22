@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { PORTFOLIO_RESET_DATE, PORTFOLIO_RESET_DATE_LABEL } from '../lib/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -109,8 +110,8 @@ export default function Home() {
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
   const [syncingPrices, setSyncingPrices] = useState(false);
 
-  // Performance chart comparison mode
-  const [performanceCompareMode, setPerformanceCompareMode] = usePersistedState<'costBasis' | 'jan8'>('portfolio-performance-compare-mode', 'costBasis');
+  // Performance comparison mode - shared between performance chart and holdings table
+  const [performanceCompareMode, setPerformanceCompareMode] = usePersistedState<'costBasis' | 'resetDate'>('portfolio-performance-compare-mode', 'costBasis');
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -228,11 +229,78 @@ export default function Home() {
       return { totalCost, totalValue, totalGainLoss, totalGainLossPercent, holdingsWithPercent };
     }, [holdings]);
 
+  // Calculate adjusted total gain/loss based on compare mode
+  const { adjustedTotalGainLoss, adjustedTotalGainLossPercent, adjustedTotalCost } = useMemo(() => {
+    let totalResetDateValue = 0;
+    let hasAllResetDateData = true;
+
+    holdings.forEach((h) => {
+      const tickerHistory = priceHistory[h.ticker] || [];
+      const resetDateRecord = tickerHistory.find((r) => r.date === PORTFOLIO_RESET_DATE);
+      if (resetDateRecord) {
+        totalResetDateValue += resetDateRecord.close_price * h.shares;
+      } else {
+        hasAllResetDateData = false;
+        totalResetDateValue += h.total_cost; // Fall back to cost basis
+      }
+    });
+
+    const compareValue = performanceCompareMode === 'resetDate' && hasAllResetDateData
+      ? totalResetDateValue
+      : totalCost;
+
+    const gainLoss = totalValue - compareValue;
+    const gainLossPercent = compareValue > 0 ? (gainLoss / compareValue) * 100 : 0;
+
+    return {
+      adjustedTotalGainLoss: gainLoss,
+      adjustedTotalGainLossPercent: gainLossPercent,
+      adjustedTotalCost: compareValue,
+    };
+  }, [holdings, priceHistory, performanceCompareMode, totalCost, totalValue]);
+
+  // Holdings with adjusted gain/loss based on compare mode (cost basis vs reset date)
+  const holdingsWithAdjustedGainLoss = useMemo(() => {
+    return holdingsWithPercent.map((h) => {
+      // Get reset date closing price for this ticker
+      const tickerHistory = priceHistory[h.ticker] || [];
+      const resetDateRecord = tickerHistory.find((r) => r.date === PORTFOLIO_RESET_DATE);
+      const resetDateValue = resetDateRecord ? resetDateRecord.close_price * h.shares : null;
+
+      // Use the selected comparison mode
+      const compareValue = performanceCompareMode === 'resetDate' && resetDateValue !== null
+        ? resetDateValue
+        : h.total_cost;
+
+      const adjustedGainLoss = h.current_value - compareValue;
+      const adjustedGainLossPercent = compareValue > 0
+        ? (adjustedGainLoss / compareValue) * 100
+        : 0;
+
+      return {
+        ...h,
+        adjusted_gain_loss: adjustedGainLoss,
+        adjusted_gain_loss_percent: adjustedGainLossPercent,
+        has_reset_date_data: resetDateValue !== null,
+      };
+    });
+  }, [holdingsWithPercent, priceHistory, performanceCompareMode]);
+
   // Sorted holdings
   const sortedHoldings = useMemo(() => {
-    return [...holdingsWithPercent].sort((a, b) => {
-      const aVal = a[sortKey];
-      const bVal = b[sortKey];
+    return [...holdingsWithAdjustedGainLoss].sort((a, b) => {
+      // Map gain_loss and gain_loss_percent to adjusted values for sorting
+      let aVal = a[sortKey];
+      let bVal = b[sortKey];
+
+      // Use adjusted values for gain/loss sorting
+      if (sortKey === 'gain_loss') {
+        aVal = a.adjusted_gain_loss;
+        bVal = b.adjusted_gain_loss;
+      } else if (sortKey === 'gain_loss_percent') {
+        aVal = a.adjusted_gain_loss_percent;
+        bVal = b.adjusted_gain_loss_percent;
+      }
 
       if (aVal === null || aVal === undefined) return 1;
       if (bVal === null || bVal === undefined) return -1;
@@ -246,7 +314,7 @@ export default function Home() {
 
       return sortDirection === 'asc' ? comparison : -comparison;
     });
-  }, [holdingsWithPercent, sortKey, sortDirection]);
+  }, [holdingsWithAdjustedGainLoss, sortKey, sortDirection]);
 
   // Chart data for target allocations
   const chartData = useMemo(() => {
@@ -262,19 +330,17 @@ export default function Home() {
 
   // Chart data for cost basis vs current value
   const performanceChartData = useMemo(() => {
-    const JAN_8_DATE = '2026-01-08';
-
     return sortedHoldings
       .filter((h) => h.total_cost > 0 || h.current_value > 0)
       .map((h) => {
-        // Get January 8th closing price for this ticker
+        // Get reset date closing price for this ticker
         const tickerHistory = priceHistory[h.ticker] || [];
-        const jan8Record = tickerHistory.find((r) => r.date === JAN_8_DATE);
-        const jan8Value = jan8Record ? jan8Record.close_price * h.shares : null;
+        const resetDateRecord = tickerHistory.find((r) => r.date === PORTFOLIO_RESET_DATE);
+        const resetDateValue = resetDateRecord ? resetDateRecord.close_price * h.shares : null;
 
         // Use the selected comparison mode
-        const compareValue = performanceCompareMode === 'jan8' && jan8Value !== null
-          ? jan8Value
+        const compareValue = performanceCompareMode === 'resetDate' && resetDateValue !== null
+          ? resetDateValue
           : h.total_cost;
 
         const changePercent = compareValue > 0
@@ -298,8 +364,8 @@ export default function Home() {
       return [];
     }
 
-    // Only show data from January 8th onwards
-    const START_DISPLAY_DATE = '2026-01-08';
+    // Only show data from the reset date onwards
+    const START_DISPLAY_DATE = PORTFOLIO_RESET_DATE;
 
     // Create a map of ticker -> shares for quick lookup
     const sharesMap = new Map<string, number>();
@@ -941,10 +1007,10 @@ export default function Home() {
         >
           <div>
             <div style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '0.375rem' }}>
-              Total Cost
+              {performanceCompareMode === 'resetDate' ? PORTFOLIO_RESET_DATE_LABEL : 'Total Cost'}
             </div>
             <div style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#111827' }}>
-              {formatCurrency(totalCost)}
+              {formatCurrency(adjustedTotalCost)}
             </div>
           </div>
           <div>
@@ -963,12 +1029,12 @@ export default function Home() {
               style={{
                 fontSize: '1.75rem',
                 fontWeight: 'bold',
-                color: totalGainLoss >= 0 ? '#059669' : '#dc2626',
+                color: adjustedTotalGainLoss >= 0 ? '#059669' : '#dc2626',
               }}
             >
-              {formatCurrency(totalGainLoss)}
+              {formatCurrency(adjustedTotalGainLoss)}
               <span style={{ fontSize: '1rem', marginLeft: '0.5rem' }}>
-                ({formatPercent(totalGainLossPercent)})
+                ({formatPercent(adjustedTotalGainLossPercent)})
               </span>
             </div>
           </div>
@@ -1151,7 +1217,7 @@ export default function Home() {
                 margin: 0,
               }}
             >
-              {performanceCompareMode === 'costBasis' ? 'Cost Basis' : 'Jan 8th Value'} vs. Current Value
+              {performanceCompareMode === 'costBasis' ? 'Cost Basis' : PORTFOLIO_RESET_DATE_LABEL} vs. Current Value
             </h3>
             <div
               style={{
@@ -1178,7 +1244,7 @@ export default function Home() {
                 Cost Basis
               </button>
               <button
-                onClick={() => setPerformanceCompareMode('jan8')}
+                onClick={() => setPerformanceCompareMode('resetDate')}
                 style={{
                   padding: '0.5rem 1rem',
                   border: 'none',
@@ -1187,11 +1253,11 @@ export default function Home() {
                   fontWeight: '500',
                   fontSize: '0.875rem',
                   transition: 'all 0.15s',
-                  backgroundColor: performanceCompareMode === 'jan8' ? '#059669' : 'transparent',
-                  color: performanceCompareMode === 'jan8' ? 'white' : '#6b7280',
+                  backgroundColor: performanceCompareMode === 'resetDate' ? '#059669' : 'transparent',
+                  color: performanceCompareMode === 'resetDate' ? 'white' : '#6b7280',
                 }}
               >
-                Jan 8th Value
+                {PORTFOLIO_RESET_DATE_LABEL}
               </button>
             </div>
           </div>
@@ -1229,7 +1295,7 @@ export default function Home() {
                     formatter={(value, name, props) => {
                       const dataPoint = props.payload as { changePercent: number; isGain: boolean };
                       const label = name === 'costBasis'
-                        ? (performanceCompareMode === 'jan8' ? 'Jan 8th Value' : 'Cost Basis')
+                        ? (performanceCompareMode === 'resetDate' ? PORTFOLIO_RESET_DATE_LABEL : 'Cost Basis')
                         : 'Current Value';
 
                       // Only show percentage on the Current Value line
@@ -1263,7 +1329,7 @@ export default function Home() {
                     formatter={(value) => (
                       <span style={{ color: '#374151', fontWeight: 500 }}>
                         {value === 'costBasis'
-                          ? (performanceCompareMode === 'jan8' ? 'Jan 8th Value' : 'Cost Basis')
+                          ? (performanceCompareMode === 'resetDate' ? PORTFOLIO_RESET_DATE_LABEL : 'Cost Basis')
                           : 'Current Value'}
                       </span>
                     )}
@@ -1616,6 +1682,72 @@ export default function Home() {
           border: '1px solid #e5e7eb',
         }}
       >
+        {/* Holdings Table Header with Compare Mode Toggle */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '1rem 1.5rem',
+            borderBottom: '1px solid #e5e7eb',
+            backgroundColor: '#fafafa',
+          }}
+        >
+          <h3
+            style={{
+              fontWeight: '600',
+              color: '#374151',
+              fontSize: '1rem',
+              margin: 0,
+            }}
+          >
+            Holdings
+          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ fontSize: '0.8125rem', color: '#6b7280' }}>Compare to:</span>
+            <div
+              style={{
+                display: 'flex',
+                backgroundColor: '#e5e7eb',
+                borderRadius: '6px',
+                padding: '2px',
+              }}
+            >
+              <button
+                onClick={() => setPerformanceCompareMode('costBasis')}
+                style={{
+                  padding: '0.375rem 0.75rem',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  fontSize: '0.8125rem',
+                  transition: 'all 0.15s',
+                  backgroundColor: performanceCompareMode === 'costBasis' ? '#059669' : 'transparent',
+                  color: performanceCompareMode === 'costBasis' ? 'white' : '#6b7280',
+                }}
+              >
+                Cost Basis
+              </button>
+              <button
+                onClick={() => setPerformanceCompareMode('resetDate')}
+                style={{
+                  padding: '0.375rem 0.75rem',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  fontSize: '0.8125rem',
+                  transition: 'all 0.15s',
+                  backgroundColor: performanceCompareMode === 'resetDate' ? '#059669' : 'transparent',
+                  color: performanceCompareMode === 'resetDate' ? 'white' : '#6b7280',
+                }}
+              >
+                {PORTFOLIO_RESET_DATE_LABEL}
+              </button>
+            </div>
+          </div>
+        </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '1350px' }}>
             <thead>
@@ -1751,22 +1883,22 @@ export default function Home() {
                       <td
                         style={{
                           ...cellStyle('right'),
-                          color: holding.gain_loss >= 0 ? '#059669' : '#dc2626',
+                          color: holding.adjusted_gain_loss >= 0 ? '#059669' : '#dc2626',
                           fontWeight: '500',
                           fontFamily: 'monospace',
                         }}
                       >
-                        {formatCurrency(holding.gain_loss)}
+                        {formatCurrency(holding.adjusted_gain_loss)}
                       </td>
                       <td
                         style={{
                           ...cellStyle('right'),
-                          color: holding.gain_loss_percent >= 0 ? '#059669' : '#dc2626',
+                          color: holding.adjusted_gain_loss_percent >= 0 ? '#059669' : '#dc2626',
                           fontWeight: '500',
                           fontFamily: 'monospace',
                         }}
                       >
-                        {formatPercent(holding.gain_loss_percent)}
+                        {formatPercent(holding.adjusted_gain_loss_percent)}
                       </td>
                       <td style={{ ...cellStyle('right'), fontFamily: 'monospace' }}>
                         <div
