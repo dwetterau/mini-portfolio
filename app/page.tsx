@@ -21,28 +21,27 @@ export const dynamic = 'force-dynamic';
 
 // Custom hook for persisted state in localStorage
 function usePersistedState<T>(key: string, defaultValue: T): [T, (value: T) => void] {
-  const [value, setValue] = useState<T>(defaultValue);
-  const [isInitialized, setIsInitialized] = useState(false);
-
-  // Load from localStorage on mount
-  useEffect(() => {
+  // Use lazy initialization to read from localStorage
+  const [value, setValue] = useState<T>(() => {
+    // Check if we're in the browser
+    if (typeof window === 'undefined') {
+      return defaultValue;
+    }
     const saved = localStorage.getItem(key);
     if (saved !== null) {
       try {
-        setValue(JSON.parse(saved) as T);
+        return JSON.parse(saved) as T;
       } catch {
-        setValue(saved as T);
+        return saved as T;
       }
     }
-    setIsInitialized(true);
-  }, [key]);
+    return defaultValue;
+  });
 
-  // Save to localStorage when value changes (after initialization)
+  // Save to localStorage when value changes
   useEffect(() => {
-    if (isInitialized) {
-      localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
-    }
-  }, [key, value, isInitialized]);
+    localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+  }, [key, value]);
 
   return [value, setValue];
 }
