@@ -271,11 +271,41 @@ export async function POST() {
       (ticker) => !bars[ticker] || bars[ticker].length === 0
     );
 
+    // Determine the set of dates Alpaca actually returned data for.
+    // We'll limit the Yahoo fallback to only these dates so that we don't
+    // end up with extra days (e.g. before market open, Yahoo may return a
+    // stale bar for "today" while Alpaca correctly returns nothing).
+    const alpacaDatesSet = new Set<string>();
+    for (const [ticker, tickerBars] of Object.entries(bars)) {
+      if (tickersWithNoData.includes(ticker)) continue;
+      for (const bar of tickerBars) {
+        alpacaDatesSet.add(bar.t.split('T')[0]);
+      }
+    }
+
     // Fallback to Yahoo Finance for tickers with no Alpaca data
     const yahooTickersFetched: string[] = [];
-    if (tickersWithNoData.length > 0) {
+    if (tickersWithNoData.length > 0 && alpacaDatesSet.size > 0) {
       console.log(
         `Fetching ${tickersWithNoData.length} tickers from Yahoo Finance: ${tickersWithNoData.join(', ')}`
+      );
+
+      for (const ticker of tickersWithNoData) {
+        const yahooBars = await fetchBarsFromYahoo(ticker, earliestMissing, endDate);
+        // Only keep Yahoo bars for dates that Alpaca also has data for,
+        // so all tickers stay aligned to the same set of trading days.
+        const filteredBars = yahooBars.filter((bar) =>
+          alpacaDatesSet.has(bar.t.split('T')[0])
+        );
+        if (filteredBars.length > 0) {
+          bars[ticker] = filteredBars;
+          yahooTickersFetched.push(ticker);
+        }
+      }
+    } else if (tickersWithNoData.length > 0) {
+      // All tickers need Yahoo (none are Alpaca-supported), fetch without restriction
+      console.log(
+        `All tickers need Yahoo Finance (no Alpaca data): ${tickersWithNoData.join(', ')}`
       );
 
       for (const ticker of tickersWithNoData) {

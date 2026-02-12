@@ -399,11 +399,20 @@ export default function Home() {
     // Calculate portfolio value for each date
     let previousTotal = 0;
     let previousTickerValues: Record<string, number> = {};
-    const data = sortedDates.map((date, index) => {
+    const data: Array<{
+      date: string;
+      displayDate: string;
+      total: number;
+      dailyChange: number;
+      [key: string]: string | number;
+    }> = [];
+
+    for (const date of sortedDates) {
       const prices = priceMap.get(date) || new Map();
       let totalValue = 0;
       const tickerValues: Record<string, number> = {};
       const tickerChanges: Record<string, number> = {};
+      let hasAllTickers = true;
 
       // Calculate value for each selected ticker
       selectedTickers.forEach((ticker) => {
@@ -416,16 +425,25 @@ export default function Home() {
 
           // Calculate per-ticker daily change
           const prevValue = previousTickerValues[ticker];
-          if (index > 0 && prevValue && prevValue > 0) {
+          if (data.length > 0 && prevValue && prevValue > 0) {
             tickerChanges[`${ticker}_change`] = ((value - prevValue) / prevValue) * 100;
           } else {
             tickerChanges[`${ticker}_change`] = 0;
           }
+        } else if (shares > 0) {
+          // This ticker has shares but is missing price data for this date
+          hasAllTickers = false;
         }
       });
 
+      // Skip dates where we're missing price data for any held ticker,
+      // so the chart never shows partial/misleading portfolio values.
+      if (!hasAllTickers) {
+        continue;
+      }
+
       // Calculate daily percent change
-      const dailyChange = index > 0 && previousTotal > 0
+      const dailyChange = data.length > 0 && previousTotal > 0
         ? ((totalValue - previousTotal) / previousTotal) * 100
         : 0;
 
@@ -443,8 +461,8 @@ export default function Home() {
 
       previousTotal = totalValue;
       previousTickerValues = { ...tickerValues };
-      return result;
-    });
+      data.push(result);
+    }
 
     return data;
   }, [priceHistory, holdings, selectedTickers]);
