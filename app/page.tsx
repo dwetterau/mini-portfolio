@@ -93,6 +93,7 @@ export default function Home() {
   const headerMenuRef = useRef<HTMLDivElement>(null);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const tickersInitializedRef = useRef(false);
+  const exportStatusTimeoutRef = useRef<number | null>(null);
 
   // Quick add form state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -108,6 +109,7 @@ export default function Home() {
   const [priceHistoryLoading, setPriceHistoryLoading] = useState(false);
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set());
   const [syncingPrices, setSyncingPrices] = useState(false);
+  const [exportStatus, setExportStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
   // Performance comparison mode - shared between performance chart and holdings table
   const [performanceCompareMode, setPerformanceCompareMode] = usePersistedState<'costBasis' | 'resetDate'>('portfolio-performance-compare-mode', 'costBasis');
@@ -197,6 +199,23 @@ export default function Home() {
 
   const formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+  };
+
+  const formatExportNumber = (value: number, maximumFractionDigits = 4) => {
+    return value.toLocaleString('en-US', {
+      useGrouping: false,
+      minimumFractionDigits: 0,
+      maximumFractionDigits,
+    });
+  };
+
+  const escapeHtmlValue = (value: string) => {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   };
 
   // Calculate totals and portfolio percentages
@@ -536,6 +555,17 @@ export default function Home() {
     setSelectedTickers(new Set());
   };
 
+  const clearExportStatusLater = useCallback(() => {
+    if (exportStatusTimeoutRef.current !== null) {
+      window.clearTimeout(exportStatusTimeoutRef.current);
+    }
+
+    exportStatusTimeoutRef.current = window.setTimeout(() => {
+      setExportStatus('idle');
+      exportStatusTimeoutRef.current = null;
+    }, 2000);
+  }, []);
+
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -637,6 +667,60 @@ export default function Home() {
       fetchHoldings();
     }
   };
+
+  const handleExportToAirtable = async () => {
+    const plainTextRows = sortedHoldings.map((holding) => [
+      holding.company_name,
+      holding.ticker,
+      formatExportNumber(holding.shares),
+      formatExportNumber(holding.current_value, 2),
+      formatExportNumber(holding.total_cost, 2),
+    ].join('\t'));
+
+    const plainTextContent = plainTextRows.join('\n');
+
+    const htmlRows = sortedHoldings.map((holding) => (
+      `<tr>${[
+        holding.company_name,
+        holding.ticker,
+        formatExportNumber(holding.shares),
+        formatExportNumber(holding.current_value, 2),
+        formatExportNumber(holding.total_cost, 2),
+      ]
+        .map((value) => `<td>${escapeHtmlValue(value)}</td>`)
+        .join('')}</tr>`
+    ));
+
+    const htmlContent = `<table><tbody>${htmlRows.join('')}</tbody></table>`;
+
+    try {
+      if (typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': new Blob([plainTextContent], { type: 'text/plain' }),
+            'text/html': new Blob([htmlContent], { type: 'text/html' }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(plainTextContent);
+      }
+
+      setExportStatus('copied');
+    } catch (error) {
+      console.error('Error copying holdings export:', error);
+      setExportStatus('error');
+    }
+
+    clearExportStatusLater();
+  };
+
+  useEffect(() => {
+    return () => {
+      if (exportStatusTimeoutRef.current !== null) {
+        window.clearTimeout(exportStatusTimeoutRef.current);
+      }
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -1721,6 +1805,42 @@ export default function Home() {
             Holdings
           </h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <button
+              onClick={handleExportToAirtable}
+              disabled={sortedHoldings.length === 0}
+              style={{
+                padding: '0.5rem 0.875rem',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: sortedHoldings.length === 0 ? 'not-allowed' : 'pointer',
+                fontWeight: '600',
+                fontSize: '0.8125rem',
+                transition: 'all 0.15s',
+                backgroundColor: exportStatus === 'copied'
+                  ? '#059669'
+                  : exportStatus === 'error'
+                    ? '#dc2626'
+                    : '#2563eb',
+                color: 'white',
+                opacity: sortedHoldings.length === 0 ? 0.6 : 1,
+              }}
+              onMouseEnter={(e) => {
+                if (sortedHoldings.length > 0 && exportStatus === 'idle') {
+                  e.currentTarget.style.backgroundColor = '#1d4ed8';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (exportStatus === 'idle') {
+                  e.currentTarget.style.backgroundColor = '#2563eb';
+                }
+              }}
+            >
+              {exportStatus === 'copied'
+                ? 'Copied'
+                : exportStatus === 'error'
+                  ? 'Copy Failed'
+                  : 'Export to Airtable'}
+            </button>
             <span style={{ fontSize: '0.8125rem', color: '#6b7280' }}>Compare to:</span>
             <div
               style={{
