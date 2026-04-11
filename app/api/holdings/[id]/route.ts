@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getHoldingById, updateHolding, deleteHolding, calculateHoldingMetrics, updateTargetAllocation } from '@/lib/db';
+import {
+  getHoldingById,
+  updateHolding,
+  deleteHolding,
+  calculateHoldingMetrics,
+  updateTargetAllocation,
+} from '@/lib/airtable';
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: idParam } = await params;
-    const id = parseInt(idParam);
-    const holding = getHoldingById(id);
+    const holding = await getHoldingById(idParam);
 
     if (!holding) {
       return NextResponse.json({ error: 'Holding not found' }, { status: 404 });
@@ -21,7 +26,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: idParam } = await params;
-    const id = parseInt(idParam);
+    const id = idParam;
     const body = await request.json();
     const { ticker, company_name, cost_basis, shares, current_price, target_allocation } = body;
 
@@ -29,7 +34,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const holding = updateHolding(
+    const holding = await updateHolding(
       id,
       ticker,
       company_name,
@@ -54,11 +59,11 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: idParam } = await params;
-    const id = parseInt(idParam);
+    const id = idParam;
     const body = await request.json();
     const { target_allocation } = body;
 
-    const holding = updateTargetAllocation(id, target_allocation ?? null);
+    const holding = await updateTargetAllocation(id, target_allocation ?? null);
 
     if (!holding) {
       return NextResponse.json({ error: 'Holding not found' }, { status: 404 });
@@ -75,8 +80,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: idParam } = await params;
-    const id = parseInt(idParam);
-    const deleted = deleteHolding(id);
+    const deleted = await deleteHolding(idParam);
 
     if (!deleted) {
       return NextResponse.json({ error: 'Holding not found' }, { status: 404 });

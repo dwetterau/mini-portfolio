@@ -1,18 +1,23 @@
-import { getAllUniqueTickers, getExistingPriceDates, insertPriceHistoryBatch } from '@/lib/db';
+import {
+  countTradingDaysOnOrBefore,
+  getAllHoldings,
+  getLatestPriceDate,
+  insertPriceHistoryBatch,
+} from '@/lib/airtable';
 import { NextResponse } from 'next/server';
 
 const ALPACA_BASE_URL = 'https://data.alpaca.markets/v2';
-const START_DATE = '2026-01-01';
+const START_DATE = process.env.PRICE_HISTORY_START_DATE || '2026-01-01';
 
 interface AlpacaBar {
-  t: string; // timestamp
-  o: number; // open
-  h: number; // high
-  l: number; // low
-  c: number; // close
-  v: number; // volume
-  n: number; // trade count
-  vw: number; // vwap
+  t: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+  n: number;
+  vw: number;
 }
 
 interface AlpacaBarsResponse {
@@ -55,7 +60,7 @@ function getApiCredentials(): { apiKey: string; secretKey: string } {
 
 function getTodayDate(): string {
   const today = new Date();
-  return today.toISOString().split('T')[0];
+  return today.toISOString().split('T')[0]!;
 }
 
 function getTradingDays(startDate: string, endDate: string): string[] {
@@ -65,9 +70,8 @@ function getTradingDays(startDate: string, endDate: string): string[] {
 
   while (current <= end) {
     const dayOfWeek = current.getDay();
-    // Exclude weekends (0 = Sunday, 6 = Saturday)
     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      days.push(current.toISOString().split('T')[0]);
+      days.push(current.toISOString().split('T')[0]!);
     }
     current.setDate(current.getDate() + 1);
   }
@@ -75,8 +79,10 @@ function getTradingDays(startDate: string, endDate: string): string[] {
   return days;
 }
 
-function getMissingDates(allDates: string[], existingDates: Set<string>): string[] {
-  return allDates.filter((date) => !existingDates.has(date));
+function addOneDay(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00.000Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 }
 
 async function fetchBarsFromAlpaca(
@@ -87,7 +93,6 @@ async function fetchBarsFromAlpaca(
 ): Promise<Record<string, AlpacaBar[]>> {
   const allBars: Record<string, AlpacaBar[]> = {};
 
-  // Initialize arrays for each ticker
   for (const ticker of tickers) {
     allBars[ticker] = [];
   }
@@ -101,8 +106,8 @@ async function fetchBarsFromAlpaca(
       end: `${endDate}T23:59:59Z`,
       timeframe: '1Day',
       limit: '10000',
-      adjustment: 'split', // Adjust for stock splits
-      feed: 'iex', // Use IEX feed (free tier)
+      adjustment: 'split',
+      feed: 'iex',
     });
 
     if (nextPageToken) {
@@ -126,7 +131,6 @@ async function fetchBarsFromAlpaca(
 
     const data: AlpacaBarsResponse = await response.json();
 
-    // Merge bars into allBars
     if (data.bars) {
       for (const [ticker, bars] of Object.entries(data.bars)) {
         if (allBars[ticker]) {
@@ -148,7 +152,6 @@ async function fetchBarsFromYahoo(
   startDate: string,
   endDate: string
 ): Promise<AlpacaBar[]> {
-  // Convert dates to Unix timestamps
   const start = Math.floor(new Date(startDate).getTime() / 1000);
   const end = Math.floor(new Date(endDate + 'T23:59:59').getTime() / 1000);
 
@@ -187,12 +190,10 @@ async function fetchBarsFromYahoo(
       const close = quote.close[i];
       const volume = quote.volume[i];
 
-      // Skip if any essential data is missing
       if (open == null || high == null || low == null || close == null) {
         continue;
       }
 
-      // Convert Unix timestamp to ISO date string
       const date = new Date(timestamps[i] * 1000);
       const isoDate = date.toISOString();
 
@@ -203,8 +204,8 @@ async function fetchBarsFromYahoo(
         l: low,
         c: close,
         v: volume ?? 0,
-        n: 0, // Yahoo doesn't provide trade count
-        vw: 0, // Yahoo doesn't provide VWAP
+        n: 0,
+        vw: 0,
       });
     }
 
@@ -215,15 +216,22 @@ async function fetchBarsFromYahoo(
   }
 }
 
+type PositionSyncPlan = {
+  ticker: string;
+  positionRecordId: string;
+  shares: number;
+  missingDates: string[];
+};
+
 export async function POST() {
   try {
     const credentials = getApiCredentials();
-    const tickers = getAllUniqueTickers();
+    const holdings = await getAllHoldings();
 
-    if (tickers.length === 0) {
+    if (holdings.length === 0) {
       return NextResponse.json({
         success: true,
-        message: 'No tickers found in database',
+        message: 'No holdings found',
         synced: 0,
       });
     }
@@ -231,19 +239,25 @@ export async function POST() {
     const endDate = getTodayDate();
     const allTradingDays = getTradingDays(START_DATE, endDate);
 
-    // Collect which dates are missing for each ticker
-    const tickersToSync: { ticker: string; missingDates: string[] }[] = [];
+    const positionsToSync: PositionSyncPlan[] = [];
 
-    for (const ticker of tickers) {
-      const existingDates = new Set(getExistingPriceDates(ticker, START_DATE, endDate));
-      const missingDates = getMissingDates(allTradingDays, existingDates);
+    for (const h of holdings) {
+      const latest = await getLatestPriceDate(h.ticker);
+      let start = latest ? addOneDay(latest) : START_DATE;
+      if (start < START_DATE) start = START_DATE;
+      const missingDates = allTradingDays.filter((d) => d >= start && d <= endDate);
 
       if (missingDates.length > 0) {
-        tickersToSync.push({ ticker, missingDates });
+        positionsToSync.push({
+          ticker: h.ticker,
+          positionRecordId: h.id,
+          shares: h.shares,
+          missingDates,
+        });
       }
     }
 
-    if (tickersToSync.length === 0) {
+    if (positionsToSync.length === 0) {
       return NextResponse.json({
         success: true,
         message: 'All price data is up to date',
@@ -251,39 +265,24 @@ export async function POST() {
       });
     }
 
-    // Fetch bars for all tickers that need syncing
-    const tickersNeedingData = tickersToSync.map((t) => t.ticker);
+    const tickersNeedingData = [...new Set(positionsToSync.map((p) => p.ticker))];
+    const allMissingDates = positionsToSync.flatMap((p) => p.missingDates);
+    const earliestMissing = allMissingDates.sort()[0]!;
 
-    // Find the earliest missing date across all tickers
-    const allMissingDates = tickersToSync.flatMap((t) => t.missingDates);
-    const earliestMissing = allMissingDates.sort()[0];
+    const bars = await fetchBarsFromAlpaca(tickersNeedingData, earliestMissing, endDate, credentials);
 
-    // Fetch from Alpaca IEX feed (covers most US exchange-traded stocks)
-    const bars = await fetchBarsFromAlpaca(
-      tickersNeedingData,
-      earliestMissing,
-      endDate,
-      credentials
-    );
-
-    // Find tickers that returned no data from Alpaca (likely OTC stocks)
     const tickersWithNoData = tickersNeedingData.filter(
       (ticker) => !bars[ticker] || bars[ticker].length === 0
     );
 
-    // Determine the set of dates Alpaca actually returned data for.
-    // We'll limit the Yahoo fallback to only these dates so that we don't
-    // end up with extra days (e.g. before market open, Yahoo may return a
-    // stale bar for "today" while Alpaca correctly returns nothing).
     const alpacaDatesSet = new Set<string>();
     for (const [ticker, tickerBars] of Object.entries(bars)) {
       if (tickersWithNoData.includes(ticker)) continue;
       for (const bar of tickerBars) {
-        alpacaDatesSet.add(bar.t.split('T')[0]);
+        alpacaDatesSet.add(bar.t.split('T')[0]!);
       }
     }
 
-    // Fallback to Yahoo Finance for tickers with no Alpaca data
     const yahooTickersFetched: string[] = [];
     if (tickersWithNoData.length > 0 && alpacaDatesSet.size > 0) {
       console.log(
@@ -292,18 +291,13 @@ export async function POST() {
 
       for (const ticker of tickersWithNoData) {
         const yahooBars = await fetchBarsFromYahoo(ticker, earliestMissing, endDate);
-        // Only keep Yahoo bars for dates that Alpaca also has data for,
-        // so all tickers stay aligned to the same set of trading days.
-        const filteredBars = yahooBars.filter((bar) =>
-          alpacaDatesSet.has(bar.t.split('T')[0])
-        );
+        const filteredBars = yahooBars.filter((bar) => alpacaDatesSet.has(bar.t.split('T')[0]!));
         if (filteredBars.length > 0) {
           bars[ticker] = filteredBars;
           yahooTickersFetched.push(ticker);
         }
       }
     } else if (tickersWithNoData.length > 0) {
-      // All tickers need Yahoo (none are Alpaca-supported), fetch without restriction
       console.log(
         `All tickers need Yahoo Finance (no Alpaca data): ${tickersWithNoData.join(', ')}`
       );
@@ -317,46 +311,33 @@ export async function POST() {
       }
     }
 
-    // Prepare records for batch insert
-    const records: Array<{
+    const airTableRows: Array<{
       ticker: string;
+      positionRecordId: string;
       date: string;
-      open_price: number;
-      high_price: number;
-      low_price: number;
       close_price: number;
-      volume: number;
-      vwap: number | null;
-      trade_count: number | null;
+      quantity: number;
     }> = [];
 
-    for (const { ticker, missingDates } of tickersToSync) {
-      const tickerBars = bars[ticker] || [];
-      const missingSet = new Set(missingDates);
+    for (const plan of positionsToSync) {
+      const tickerBars = bars[plan.ticker] || [];
+      const missingSet = new Set(plan.missingDates);
 
       for (const bar of tickerBars) {
-        // Extract date from timestamp
-        const date = bar.t.split('T')[0];
-
-        // Only add if this date is in the missing dates
+        const date = bar.t.split('T')[0]!;
         if (missingSet.has(date)) {
-          records.push({
-            ticker,
+          airTableRows.push({
+            ticker: plan.ticker,
+            positionRecordId: plan.positionRecordId,
             date,
-            open_price: bar.o,
-            high_price: bar.h,
-            low_price: bar.l,
             close_price: bar.c,
-            volume: bar.v,
-            vwap: bar.vw ?? null,
-            trade_count: bar.n ?? null,
+            quantity: plan.shares,
           });
         }
       }
     }
 
-    // Batch insert all records
-    const insertedCount = insertPriceHistoryBatch(records);
+    const insertedCount = await insertPriceHistoryBatch(airTableRows);
 
     return NextResponse.json({
       success: true,
@@ -364,7 +345,7 @@ export async function POST() {
       synced: insertedCount,
       details: {
         tickersProcessed: tickersNeedingData.length,
-        recordsFound: records.length,
+        recordsFound: airTableRows.length,
         recordsInserted: insertedCount,
         yahooTickers: yahooTickersFetched,
       },
@@ -383,27 +364,38 @@ export async function POST() {
 
 export async function GET() {
   try {
-    const tickers = getAllUniqueTickers();
+    const holdings = await getAllHoldings();
     const endDate = getTodayDate();
     const allTradingDays = getTradingDays(START_DATE, endDate);
+    const sorted = [...allTradingDays].sort();
+
+    const byTicker = new Map<string, typeof holdings>();
+    for (const h of holdings) {
+      const list = byTicker.get(h.ticker) ?? [];
+      list.push(h);
+      byTicker.set(h.ticker, list);
+    }
 
     const status: Record<string, { total: number; existing: number; missing: number }> = {};
 
-    for (const ticker of tickers) {
-      const existingDates = getExistingPriceDates(ticker, START_DATE, endDate);
-      const missingCount = allTradingDays.length - existingDates.length;
-
+    for (const [ticker, list] of byTicker) {
+      let minExisting = sorted.length;
+      for (const h of list) {
+        const latest = await getLatestPriceDate(h.ticker);
+        const c = countTradingDaysOnOrBefore(sorted, latest);
+        minExisting = Math.min(minExisting, c);
+      }
       status[ticker] = {
-        total: allTradingDays.length,
-        existing: existingDates.length,
-        missing: missingCount,
+        total: sorted.length,
+        existing: minExisting,
+        missing: sorted.length - minExisting,
       };
     }
 
     return NextResponse.json({
       startDate: START_DATE,
       endDate,
-      tradingDays: allTradingDays.length,
+      tradingDays: sorted.length,
       tickers: status,
     });
   } catch (error) {

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 export const dynamic = 'force-dynamic';
 
 interface Holding {
-  id: number;
+  id: string;
   ticker: string;
   company_name: string;
   cost_basis: number;

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllHoldings, createHolding, calculateHoldingMetrics, deleteHoldingsWithoutTarget } from '@/lib/db';
+import {
+  getAllHoldings,
+  createHolding,
+  calculateHoldingMetrics,
+  deleteHoldingsWithoutTarget,
+} from '@/lib/airtable';
 
 // CORS headers for Chrome extension
 const corsHeaders = {
@@ -14,7 +19,7 @@ export async function OPTIONS() {
 
 export async function GET() {
   try {
-    const holdings = getAllHoldings();
+    const holdings = await getAllHoldings();
     const holdingsWithMetrics = holdings.map(calculateHoldingMetrics);
     return NextResponse.json(holdingsWithMetrics, { headers: corsHeaders });
   } catch (error) {
@@ -32,7 +37,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400, headers: corsHeaders });
     }
 
-    const holding = createHolding(ticker, company_name, cost_basis, shares, current_price || null, target_allocation ?? null);
+    const holding = await createHolding(
+      ticker,
+      company_name,
+      cost_basis,
+      shares,
+      current_price || null,
+      target_allocation ?? null
+    );
     const holdingWithMetrics = calculateHoldingMetrics(holding);
 
     return NextResponse.json(holdingWithMetrics, { status: 201, headers: corsHeaders });
@@ -44,7 +56,7 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE() {
   try {
-    const deletedCount = deleteHoldingsWithoutTarget();
+    const deletedCount = await deleteHoldingsWithoutTarget();
     return NextResponse.json({ deleted: deletedCount }, { headers: corsHeaders });
   } catch (error) {
     console.error('Error deleting holdings:', error);

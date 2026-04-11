@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { upsertHoldingByTicker, calculateHoldingMetrics } from '@/lib/db';
+import { upsertHoldingByTicker, calculateHoldingMetrics } from '@/lib/airtable';
 
 // CORS headers for Chrome extension
 const corsHeaders = {
@@ -36,7 +36,13 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const created = upsertHoldingByTicker(ticker, company_name, cost_basis, shares, current_price || null);
+        const created = await upsertHoldingByTicker(
+          ticker,
+          company_name,
+          cost_basis,
+          shares,
+          current_price || null
+        );
         const holdingWithMetrics = calculateHoldingMetrics(created);
         results.push(holdingWithMetrics);
       } catch (error) {

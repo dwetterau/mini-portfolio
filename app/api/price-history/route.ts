@@ -1,4 +1,4 @@
-import { getAllUniqueTickers, getPriceHistory } from '@/lib/db';
+import { getAllUniqueTickers, getPriceHistory } from '@/lib/airtable';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
@@ -10,18 +10,18 @@ export async function GET(request: NextRequest) {
 
     // If no ticker specified, return all tickers with their latest prices
     if (!ticker) {
-      const tickers = getAllUniqueTickers();
-      const result: Record<string, ReturnType<typeof getPriceHistory>> = {};
+      const tickers = await getAllUniqueTickers();
+      const result: Record<string, Awaited<ReturnType<typeof getPriceHistory>>> = {};
 
       for (const t of tickers) {
-        result[t] = getPriceHistory(t, startDate || undefined, endDate || undefined);
+        result[t] = await getPriceHistory(t, startDate || undefined, endDate || undefined);
       }
 
       return NextResponse.json(result);
     }
 
     // Return price history for specific ticker
-    const history = getPriceHistory(
+    const history = await getPriceHistory(
       ticker.toUpperCase(),
       startDate || undefined,
       endDate || undefined

@@ -46,8 +46,14 @@ function usePersistedState<T>(key: string, defaultValue: T): [T, (value: T) => v
   return [value, setValue];
 }
 
+/** Parse YYYY-MM-DD as a local calendar date (no UTC day shift). */
+function parseLocalDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
 interface Holding {
-  id: number;
+  id: string;
   ticker: string;
   company_name: string;
   cost_basis: number;
@@ -74,6 +80,8 @@ interface PriceHistoryRecord {
   low_price: number;
   close_price: number;
   volume: number;
+  /** Shares on that date (from Airtable); falls back to current holding shares when absent */
+  quantity?: number;
 }
 
 interface PriceHistoryData {
@@ -85,9 +93,9 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = usePersistedState<SortKey>('portfolio-sort-key', 'ticker');
   const [sortDirection, setSortDirection] = usePersistedState<SortDirection>('portfolio-sort-direction', 'asc');
-  const [editingTargetId, setEditingTargetId] = useState<number | null>(null);
+  const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
   const [editingTargetValue, setEditingTargetValue] = useState<string>('');
-  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = usePersistedState<TabView>('portfolio-active-tab', 'history');
   const menuRef = useRef<HTMLDivElement>(null);
   const headerMenuRef = useRef<HTMLDivElement>(null);
@@ -175,12 +183,20 @@ export default function Home() {
     }
   };
 
-  // Fetch price history when switching to history tab
+  // Load price history when the history tab is active and we do not have data yet.
+  // `priceHistory` is intentionally omitted from deps: after fetch, setPriceHistory runs on every
+  // response. If the API returns `{}` (no tickers), keys stay empty forever — listing priceHistory
+  // would re-run this effect, see length === 0 again, and call fetch in a tight loop.
   useEffect(() => {
-    if (activeTab === 'history' && Object.keys(priceHistory).length === 0) {
-      fetchPriceHistory();
+    if (activeTab !== 'history') {
+      return;
     }
-  }, [activeTab, priceHistory, fetchPriceHistory]);
+    if (Object.keys(priceHistory).length > 0) {
+      return;
+    }
+    void fetchPriceHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above (avoid infinite fetch when API returns {})
+  }, [activeTab, fetchPriceHistory]);
 
   // Initialize selected tickers when holdings load (only on first load)
   useEffect(() => {
@@ -256,7 +272,8 @@ export default function Home() {
       const tickerHistory = priceHistory[h.ticker] || [];
       const resetDateRecord = tickerHistory.find((r) => r.date === PORTFOLIO_RESET_DATE);
       if (resetDateRecord) {
-        totalResetDateValue += resetDateRecord.close_price * h.shares;
+        const q = resetDateRecord.quantity ?? h.shares;
+        totalResetDateValue += resetDateRecord.close_price * q;
       } else {
         hasAllResetDateData = false;
         totalResetDateValue += h.total_cost; // Fall back to cost basis
@@ -283,7 +300,9 @@ export default function Home() {
       // Get reset date closing price for this ticker
       const tickerHistory = priceHistory[h.ticker] || [];
       const resetDateRecord = tickerHistory.find((r) => r.date === PORTFOLIO_RESET_DATE);
-      const resetDateValue = resetDateRecord ? resetDateRecord.close_price * h.shares : null;
+      const resetDateValue = resetDateRecord
+        ? resetDateRecord.close_price * (resetDateRecord.quantity ?? h.shares)
+        : null;
 
       // Use the selected comparison mode
       const compareValue = performanceCompareMode === 'resetDate' && resetDateValue !== null
@@ -354,7 +373,9 @@ export default function Home() {
         // Get reset date closing price for this ticker
         const tickerHistory = priceHistory[h.ticker] || [];
         const resetDateRecord = tickerHistory.find((r) => r.date === PORTFOLIO_RESET_DATE);
-        const resetDateValue = resetDateRecord ? resetDateRecord.close_price * h.shares : null;
+        const resetDateValue = resetDateRecord
+        ? resetDateRecord.close_price * (resetDateRecord.quantity ?? h.shares)
+        : null;
 
         // Use the selected comparison mode
         const compareValue = performanceCompareMode === 'resetDate' && resetDateValue !== null
@@ -401,14 +422,15 @@ export default function Home() {
       });
     });
 
-    // Convert price history to a map of date -> ticker -> price
-    const priceMap = new Map<string, Map<string, number>>();
+    // date -> ticker -> { price, quantity on that date }
+    const priceMap = new Map<string, Map<string, { price: number; quantity: number }>>();
     Object.entries(priceHistory).forEach(([ticker, records]) => {
       records.forEach((r) => {
         if (!priceMap.has(r.date)) {
           priceMap.set(r.date, new Map());
         }
-        priceMap.get(r.date)!.set(ticker, r.close_price);
+        const shares = r.quantity ?? sharesMap.get(ticker) ?? 0;
+        priceMap.get(r.date)!.set(ticker, { price: r.close_price, quantity: shares });
       });
     });
 
@@ -435,8 +457,9 @@ export default function Home() {
 
       // Calculate value for each selected ticker
       selectedTickers.forEach((ticker) => {
-        const shares = sharesMap.get(ticker) || 0;
-        const price = prices.get(ticker);
+        const row = prices.get(ticker);
+        const shares = row?.quantity ?? sharesMap.get(ticker) ?? 0;
+        const price = row?.price;
         if (price !== undefined && shares > 0) {
           const value = price * shares;
           tickerValues[ticker] = value;
@@ -449,7 +472,7 @@ export default function Home() {
           } else {
             tickerChanges[`${ticker}_change`] = 0;
           }
-        } else if (shares > 0) {
+        } else if ((sharesMap.get(ticker) || 0) > 0) {
           // This ticker has shares but is missing price data for this date
           hasAllTickers = false;
         }
@@ -468,7 +491,7 @@ export default function Home() {
 
       const result = {
         date,
-        displayDate: new Date(date).toLocaleDateString('en-US', {
+        displayDate: parseLocalDate(date).toLocaleDateString('en-US', {
           month: 'short',
           day: 'numeric',
         }),
@@ -587,7 +610,7 @@ export default function Home() {
     setEditingTargetValue(holding.target_allocation?.toString() || '');
   };
 
-  const handleTargetSave = async (holdingId: number) => {
+  const handleTargetSave = async (holdingId: string) => {
     try {
       const target = editingTargetValue.trim() === '' ? null : parseFloat(editingTargetValue);
       await fetch(`/api/holdings/${holdingId}`, {
@@ -602,7 +625,7 @@ export default function Home() {
     }
   };
 
-  const handleTargetKeyDown = (e: React.KeyboardEvent, holdingId: number) => {
+  const handleTargetKeyDown = (e: React.KeyboardEvent, holdingId: string) => {
     if (e.key === 'Enter') {
       handleTargetSave(holdingId);
     } else if (e.key === 'Escape') {
@@ -642,7 +665,7 @@ export default function Home() {
     }
   };
 
-  const handleDelete = async (holdingId: number) => {
+  const handleDelete = async (holdingId: string) => {
     if (confirm('Are you sure you want to delete this holding?')) {
       await fetch(`/api/holdings/${holdingId}`, { method: 'DELETE' });
       setOpenMenuId(null);

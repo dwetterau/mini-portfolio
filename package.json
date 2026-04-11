@@ -9,17 +9,17 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "migrate:airtable": "tsx scripts/migrate-price-history.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
+    "airtable": "^0.12.2",
     "next": "^16.1.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^3.6.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.8",
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
@@ -27,6 +27,8 @@
     "eslint-config-next": "^16.1.6",
     "prettier": "^3.1.0",
     "prettier-plugin-organize-imports": "^3.2.3",
+    "sql.js": "^1.14.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.0.0"
   }
 }

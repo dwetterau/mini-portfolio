@@ -10,10 +10,11 @@
  *
  * TODO: Make this user-configurable in the future
  */
-export const PORTFOLIO_RESET_DATE = '2026-01-08';
+export const PORTFOLIO_RESET_DATE = process.env.NEXT_PUBLIC_PORTFOLIO_RESET_DATE || '2026-01-08';
 
 /**
  * Human-readable label for the reset point date
  * Used in UI toggles and labels
  */
-export const PORTFOLIO_RESET_DATE_LABEL = 'Jan 8th Value';
+export const PORTFOLIO_RESET_DATE_LABEL =
+  process.env.NEXT_PUBLIC_PORTFOLIO_RESET_DATE_LABEL || 'Jan 8th Value';
