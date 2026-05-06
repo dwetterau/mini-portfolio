@@ -20,6 +20,15 @@ function showMessage(text, type = 'info') {
 // Function to extract ALL holdings from page (runs in page context)
 function extractAllHoldings() {
   const holdings = [];
+  const isPositiveNumber = (value) =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0;
+  const isCompleteHolding = (data) =>
+    Boolean(
+      data.ticker &&
+        data.company_name &&
+        isPositiveNumber(data.shares) &&
+        isPositiveNumber(data.cost_basis)
+    );
 
   // Try to extract from positionsDetails table (specific structure)
   const positionsTable = document.getElementById('positionsDetails');
@@ -165,13 +174,15 @@ function extractAllHoldings() {
         }
       });
 
-      console.log(`Row ${rowIndex}: ${data.ticker}`, data);
-
       // Only add if we have required fields (ticker, company_name, shares, cost_basis)
       // current_price is optional
-      if (data.ticker && data.company_name && data.shares && data.shares > 0 && data.cost_basis && data.cost_basis > 0) {
-        holdings.push(data);
+      if (!isCompleteHolding(data)) {
+        console.debug(`Skipping incomplete holding row ${rowIndex}`, data);
+        return;
       }
+
+      console.log(`Row ${rowIndex}: ${data.ticker}`, data);
+      holdings.push(data);
     });
   }
 

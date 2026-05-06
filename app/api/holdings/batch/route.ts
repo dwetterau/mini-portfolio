@@ -1,6 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { upsertHoldingByTicker, calculateHoldingMetrics } from '@/lib/airtable';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseRequiredNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseOptionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 // CORS headers for Chrome extension
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -25,9 +41,22 @@ export async function POST(request: NextRequest) {
     const errors = [];
 
     for (const holding of holdings) {
-      const { ticker, company_name, cost_basis, shares, current_price } = holding;
+      if (!isRecord(holding)) {
+        errors.push({
+          holding,
+          error: 'Holding must be an object',
+        });
+        continue;
+      }
 
-      if (!ticker || !company_name || cost_basis === undefined || shares === undefined) {
+      const ticker = typeof holding.ticker === 'string' ? holding.ticker.trim() : '';
+      const company_name =
+        typeof holding.company_name === 'string' ? holding.company_name.trim() : '';
+      const cost_basis = parseRequiredNumber(holding.cost_basis);
+      const shares = parseRequiredNumber(holding.shares);
+      const current_price = parseOptionalNumber(holding.current_price);
+
+      if (!ticker || !company_name || cost_basis === null || shares === null) {
         errors.push({
           holding,
           error: 'Missing required fields',
@@ -41,7 +70,7 @@ export async function POST(request: NextRequest) {
           company_name,
           cost_basis,
           shares,
-          current_price || null
+          current_price
         );
         const holdingWithMetrics = calculateHoldingMetrics(created);
         results.push(holdingWithMetrics);

@@ -15,7 +15,11 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { PORTFOLIO_RESET_DATE, PORTFOLIO_RESET_DATE_LABEL } from '../lib/constants';
+import {
+  PORTFOLIO_RESET_DATE,
+  PORTFOLIO_RESET_DATE_DISPLAY,
+  PORTFOLIO_RESET_DATE_LABEL,
+} from '../lib/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -691,7 +695,7 @@ export default function Home() {
     }
   };
 
-  const handleExportToAirtable = async () => {
+  const handleCopyAirtableRows = async () => {
     const plainTextRows = sortedHoldings.map((holding) => [
       holding.company_name,
       holding.ticker,
@@ -1745,7 +1749,7 @@ export default function Home() {
             >
               <div>
                 <div style={{ color: '#6b7280', fontSize: '0.75rem', marginBottom: '0.25rem' }}>
-                  Start Value (Jan 8)
+                  Start Value ({PORTFOLIO_RESET_DATE_DISPLAY})
                 </div>
                 <div style={{ fontWeight: '600', fontSize: '1.125rem', fontFamily: 'monospace' }}>
                   {formatCurrency(historicalChartData[0]?.total || 0)}
@@ -1829,7 +1833,7 @@ export default function Home() {
           </h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <button
-              onClick={handleExportToAirtable}
+              onClick={handleCopyAirtableRows}
               disabled={sortedHoldings.length === 0}
               style={{
                 padding: '0.5rem 0.875rem',
@@ -1862,7 +1866,7 @@ export default function Home() {
                 ? 'Copied'
                 : exportStatus === 'error'
                   ? 'Copy Failed'
-                  : 'Export to Airtable'}
+                  : 'Copy to Clipboard'}
             </button>
             <span style={{ fontSize: '0.8125rem', color: '#6b7280' }}>Compare to:</span>
             <div

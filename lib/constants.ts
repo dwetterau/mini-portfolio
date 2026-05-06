@@ -1,3 +1,5 @@
+import { format, isValid, parseISO } from 'date-fns';
+
 /**
  * Portfolio Reset Point Configuration
  *
@@ -12,9 +14,29 @@
  */
 export const PORTFOLIO_RESET_DATE = process.env.NEXT_PUBLIC_PORTFOLIO_RESET_DATE || '2026-01-08';
 
+function formatResetDateLabel(date: string): string {
+  const parsedDate = parseISO(date);
+
+  if (!isValid(parsedDate)) {
+    return 'Reset Date Value';
+  }
+
+  return format(parsedDate, "MMM do 'Value'");
+}
+
+function formatResetDateDisplay(date: string): string {
+  const parsedDate = parseISO(date);
+
+  if (!isValid(parsedDate)) {
+    return 'Reset Date';
+  }
+
+  return format(parsedDate, 'MMM do');
+}
+
 /**
  * Human-readable label for the reset point date
  * Used in UI toggles and labels
  */
-export const PORTFOLIO_RESET_DATE_LABEL =
-  process.env.NEXT_PUBLIC_PORTFOLIO_RESET_DATE_LABEL || 'Jan 8th Value';
+export const PORTFOLIO_RESET_DATE_LABEL = formatResetDateLabel(PORTFOLIO_RESET_DATE);
+export const PORTFOLIO_RESET_DATE_DISPLAY = formatResetDateDisplay(PORTFOLIO_RESET_DATE);

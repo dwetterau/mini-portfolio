@@ -244,6 +244,18 @@ export async function updateHolding(
   const existing = await getHoldingById(id);
   if (!existing) return null;
 
+  return updatePositionRecord(id, ticker, company_name, cost_basis, shares, current_price, target_allocation);
+}
+
+async function updatePositionRecord(
+  id: string,
+  ticker: string,
+  company_name: string,
+  cost_basis: number,
+  shares: number,
+  current_price: number | null = null,
+  target_allocation: number | null = null
+): Promise<Holding> {
   const base = getBase();
   let valueNum: number;
   if (current_price !== null && current_price !== undefined) {
@@ -300,16 +312,14 @@ export async function upsertHoldingByTicker(
   const existing = await getHoldingByTicker(ticker);
   if (existing) {
     const newTarget = target_allocation ?? existing.target_allocation;
-    return (
-      (await updateHolding(
-        existing.id,
-        ticker,
-        company_name,
-        cost_basis,
-        shares,
-        current_price,
-        newTarget
-      ))!
+    return updatePositionRecord(
+      existing.id,
+      ticker,
+      company_name,
+      cost_basis,
+      shares,
+      current_price,
+      newTarget
     );
   }
   return createHolding(ticker, company_name, cost_basis, shares, current_price, target_allocation);

@@ -4,10 +4,11 @@ import {
   getLatestPriceDate,
   insertPriceHistoryBatch,
 } from '@/lib/airtable';
+import { PORTFOLIO_RESET_DATE } from '@/lib/constants';
 import { NextResponse } from 'next/server';
 
 const ALPACA_BASE_URL = 'https://data.alpaca.markets/v2';
-const START_DATE = process.env.PRICE_HISTORY_START_DATE || '2026-01-01';
+const START_DATE = PORTFOLIO_RESET_DATE;
 
 interface AlpacaBar {
   t: string;
